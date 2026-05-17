@@ -149,6 +149,12 @@ jobs:
         run: |
          cd kernel_workspace
          set -e
+         
+         # 【关键新增】修改 Bazel 全局配置，限制并发数和内存，防止进入虚拟内存假死状态
+         echo "build --jobs=2" >> ./kernel_platform/.bazelrc
+         echo "build --local_ram_resources=5120" >> ./kernel_platform/.bazelrc
+         echo "build --local_cpu_resources=2" >> ./kernel_platform/.bazelrc
+         
          LTO=none SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun perf
 
       - name: Make AnyKernel3 & Fix Output Path
