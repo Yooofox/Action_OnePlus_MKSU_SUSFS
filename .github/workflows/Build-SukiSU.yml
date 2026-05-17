@@ -8,7 +8,7 @@ env:
   FEIL: oneplus_13
   ANDROID_VERSION: android15
   KERNEL_VERSION: "6.6"
-  BUILD_METHOD: gki
+  BUILD_METHOD: perf
 
 jobs:
   build:
@@ -20,7 +20,7 @@ jobs:
         with:
           root-reserve-mb: 8192
           temp-reserve-mb: 2048
-          swap-size-mb: 12288 # 【修改点1】将虚拟内存提高到 12GB 兜底
+          swap-size-mb: 12288
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -90,12 +90,20 @@ jobs:
           cd ./common
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || true
           
-          echo "检查并修复因为冲突漏打的 include 头文件..."
-          # 自动找出使用了 SUSFS 但没引入头文件的 .c 文件，强制插入头文件
+          echo "检查并安全修复因为冲突漏打的 include 头文件..."
           for f in $(grep -rl "SUSFS_" fs/ | grep "\.c$"); do
               if ! grep -q "linux/susfs.h" "$f"; then
-                  echo "Auto-fixing missing susfs.h include in $f"
-                  sed -i '2i #include <linux/susfs.h>' "$f"
+                  echo "智能修复 $f 中的引用缺失..."
+                  # 找到该文件中最后一个 #include 的行号
+                  LAST_INC=$(grep -nE "^[[:space:]]*#include" "$f" | tail -n 1 | cut -d: -f1)
+                  if [ -n "$LAST_INC" ]; then
+                      # 将缺失的头文件安全地插在最后一个 include 之后
+                      sed -i "${LAST_INC} a #include <linux/cred.h>" "$f"
+                      sed -i "$((LAST_INC + 1)) a #include <linux/susfs.h>" "$f"
+                  else
+                      sed -i '1 i #include <linux/cred.h>' "$f"
+                      sed -i '2 i #include <linux/susfs.h>' "$f"
+                  fi
               fi
           done
           
@@ -141,8 +149,7 @@ jobs:
         run: |
          cd kernel_workspace
          set -e
-         # 【修改点2】将 LTO=thin 改为 LTO=none，大幅降低内存消耗，防止爆内存
-         LTO=none SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun gki
+         LTO=none SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun perf
 
       - name: Make AnyKernel3 & Fix Output Path
         run: |
@@ -168,11 +175,12 @@ jobs:
             cp "$image_path" ./AnyKernel3/Image
           else
             echo "错误：在整个 kernel_workspace 目录中都未找到 Image 文件！"
+            echo "这通常意味着编译在中途失败，请检查上面 'Build kernel' 步骤的具体日志。"
             exit 1
           fi
 
           image_dir=$(dirname "$image_path")
-          fallback_dir="kernel_workspace/kernel_platform/out/msm-kernel-sun-gki/dist/"
+          fallback_dir="kernel_workspace/kernel_platform/out/msm-kernel-sun-perf/dist/"
           
           for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
             if [ -f "$image_dir/$file" ]; then
