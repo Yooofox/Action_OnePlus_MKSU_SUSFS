@@ -1,12 +1,12 @@
 name: Build OnePlus_SukiSU Ultra All
-on:
+于:
   workflow_dispatch:
     inputs:
       CPU:
-        type: choice
+        输入: choice
         description: "分支"
         required: true
-        default: sm8550
+        默认: sm8550
         options:
           - sm7550
           - sm7675
@@ -17,10 +17,10 @@ on:
           - sm8750
           - sm8850
       FEIL:
-        type: choice
+        输入: choice
         description: "配置文件"
         required: true
-        default: oneplus_ace2_pro_v
+        默认: oneplus_ace2_pro_v
         options:
           - oneplus_nord_ce4_v
           - oneplus_ace_3v_v
@@ -326,7 +326,7 @@ jobs:
          cd kernel_workspace
          LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
 
-      - name: Make AnyKernel3
+- name: Make AnyKernel3
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
@@ -336,22 +336,28 @@ jobs:
           dir3="kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
           dir4="kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
           dir5="kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
+          
+          # 新增 dir6：适配一加13 (sm8750) 等新平台的真实输出路径
+          dir6="kernel_workspace/kernel_platform/out/dist/"
+          
           target1="./AnyKernel3/"
           target2="./kernel_workspace/kernel"
 
-          # 查找 Image 文件
-          if find "$dir1" -name "Image" | grep -q "Image"; then
+          # 查找 Image 文件，增加 2>/dev/null 屏蔽不存在文件夹的误报
+          if find "$dir1" -name "Image" 2>/dev/null | grep -q "Image"; then
             image_path="$dir1"Image
-          elif find "$dir2" -name "Image" | grep -q "Image"; then
+          elif find "$dir6" -name "Image" 2>/dev/null | grep -q "Image"; then
+            image_path="$dir6"Image
+          elif find "$dir2" -name "Image" 2>/dev/null | grep -q "Image"; then
             image_path="$dir2"Image
-          elif find "$dir3" -name "Image" | grep -q "Image"; then
+          elif find "$dir3" -name "Image" 2>/dev/null | grep -q "Image"; then
             image_path="$dir3"Image
-          elif find "$dir4" -name "Image" | grep -q "Image"; then
+          elif find "$dir4" -name "Image" 2>/dev/null | grep -q "Image"; then
             image_path="$dir4"Image
-          elif find "$dir5" -name "Image" | grep -q "Image"; then
+          elif find "$dir5" -name "Image" 2>/dev/null | grep -q "Image"; then
             image_path="$dir5"Image
           else
-            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
+            image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" 2>/dev/null | head -n 1)
           fi
 
           # 拷贝 Image
@@ -368,20 +374,23 @@ jobs:
             exit 1
           fi
 
-          # 可选复制其它新文件（如果存在）
+          # 拷贝其它新文件（供一加13使用）
           if [ "${{ github.event.inputs.CPU }}" = "sm8750" ] || [ "${{ github.event.inputs.CPU }}" = "sm8850" ]; then
-          for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
-            if [ -f "$dir1$file" ]; then
-              target_name="$file"
-              # 特殊处理 system_dlkm.erofs.img 的目标名
-              if [ "$file" = "system_dlkm.erofs.img" ]; then
-                target_name="system_dlkm.img"
+            # 优先从真实的输出目录 dir6 拷贝附加镜像
+            copy_dir="$dir1"
+            if [ -d "$dir6" ]; then copy_dir="$dir6"; fi
+            
+            for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
+              if [ -f "$copy_dir$file" ]; then
+                target_name="$file"
+                if [ "$file" = "system_dlkm.erofs.img" ]; then
+                  target_name="system_dlkm.img"
+                fi
+                cp "$copy_dir$file" "./AnyKernel3/$target_name"
+              else
+                echo "$file 不存在，跳过复制"
               fi
-              cp "$dir1$file" "./AnyKernel3/$target_name"
-            else
-              echo "$file 不存在，跳过复制"
-            fi
-          done
+            done
           fi
 
       - name: Apply patch_linux and replace Image
