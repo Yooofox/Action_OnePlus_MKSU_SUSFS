@@ -1,6 +1,6 @@
 name: Build OnePlus 13 (sm8750) SukiSU Ultra
 on:
-  workflow_dispatch: # 移除所有手动输入项，一键触发
+  workflow_dispatch:
 
 env:
   CPU: sm8750
@@ -130,6 +130,8 @@ jobs:
       - name: Build kernel (OnePlus 13 / sm8750 Fallback Script)
         run: |
          cd kernel_workspace
+         # 加入 set -e，如果编译命令失败（非零退出码），立即停止整个 Action
+         set -e
          LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun gki
 
       - name: Make AnyKernel3 & Fix Output Path
@@ -137,51 +139,49 @@ jobs:
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
 
-          dir1="kernel_workspace/kernel_platform/out/msm-kernel-sun-gki/dist/"
-          dir2="kernel_workspace/kernel_platform/bazel-out/k8-fastbuild/bin/msm-kernel/sun_gki_kbuild_mixed_tree/"
-          dir3="kernel_workspace/kernel_platform/out/msm-sun-sun-gki/dist/"
-          dir4="kernel_workspace/kernel_platform/out/msm-kernel-sun-gki/gki_kernel/common/arch/arm64/boot/"
-          dir5="kernel_workspace/kernel_platform/out/msm-sun-sun-gki/gki_kernel/common/arch/arm64/boot/"
-          dir6="kernel_workspace/kernel_platform/out/dist/" # 一加13专用输出路径
+          echo "================ 开始全局搜索 Image 文件 ================"
+          cd kernel_workspace
+          
+          # 在整个 kernel_workspace 目录下搜索所有名叫 Image 的文件，忽略权限报错
+          find . -type f -name "Image" 2>/dev/null > found_images.txt
+          
+          echo "找到的 Image 文件列表："
+          cat found_images.txt
+          echo "========================================================="
 
-          # 查找 Image 文件
-          if find "$dir1" -name "Image" 2>/dev/null | grep -q "Image"; then
-            image_path="$dir1"Image
-          elif find "$dir6" -name "Image" 2>/dev/null | grep -q "Image"; then
-            image_path="$dir6"Image
-          elif find "$dir2" -name "Image" 2>/dev/null | grep -q "Image"; then
-            image_path="$dir2"Image
-          elif find "$dir3" -name "Image" 2>/dev/null | grep -q "Image"; then
-            image_path="$dir3"Image
-          elif find "$dir4" -name "Image" 2>/dev/null | grep -q "Image"; then
-            image_path="$dir4"Image
-          elif find "$dir5" -name "Image" 2>/dev/null | grep -q "Image"; then
-            image_path="$dir5"Image
-          else
-            image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" 2>/dev/null | head -n 1)
-          fi
+          # 读取第一行作为我们的 image_path
+          raw_image_path=$(head -n 1 found_images.txt)
+          
+          cd .. # 回到工作区根目录
 
-          # 拷贝 Image 到 AnyKernel3
-          if [ -n "$image_path" ] && [ -f "$image_path" ]; then
+          if [ -n "$raw_image_path" ]; then
+            # 拼接完整相对路径
+            image_path="kernel_workspace/${raw_image_path#./}"
+            echo "最终选定的 Image 路径为: $image_path"
             cp "$image_path" ./AnyKernel3/Image
           else
-            echo "未找到 Image 文件，构建可能失败"
+            echo "错误：在整个 kernel_workspace 目录中都未找到 Image 文件！这说明内核根本没有编译成功。"
+            echo "请检查 'Build kernel' 步骤的原始构建日志，看看是不是因为代码冲突或依赖缺失导致了编译失败。"
             exit 1
           fi
 
-          # 拷贝一加13额外需要的镜像文件
-          copy_dir="$dir1"
-          if [ -d "$dir6" ]; then copy_dir="$dir6"; fi
+          # 尝试在刚才找到 Image 的同级目录，或者固定目录寻找 img 镜像文件
+          image_dir=$(dirname "$image_path")
+          fallback_dir="kernel_workspace/kernel_platform/out/msm-kernel-sun-gki/dist/"
           
           for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
-            if [ -f "$copy_dir$file" ]; then
-              target_name="$file"
-              if [ "$file" = "system_dlkm.erofs.img" ]; then
-                target_name="system_dlkm.img"
-              fi
-              cp "$copy_dir$file" "./AnyKernel3/$target_name"
+            if [ -f "$image_dir/$file" ]; then
+               target_name="$file"
+               if [ "$file" = "system_dlkm.erofs.img" ]; then target_name="system_dlkm.img"; fi
+               cp "$image_dir/$file" "./AnyKernel3/$target_name"
+               echo "已复制: $image_dir/$file"
+            elif [ -f "$fallback_dir/$file" ]; then
+               target_name="$file"
+               if [ "$file" = "system_dlkm.erofs.img" ]; then target_name="system_dlkm.img"; fi
+               cp "$fallback_dir/$file" "./AnyKernel3/$target_name"
+               echo "已复制: $fallback_dir/$file"
             else
-              echo "$file 不存在，跳过复制"
+               echo "$file 在 $image_dir 和 $fallback_dir 均未找到，跳过。"
             fi
           done
 
