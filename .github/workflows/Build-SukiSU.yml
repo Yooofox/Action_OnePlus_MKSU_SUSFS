@@ -76,12 +76,32 @@ jobs:
           export KSU_VERSION=$KSU_VERSION
           sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
           
-          # 【新增】强制修复 SukiSU-Ultra 自身代码在 6.6 内核下的漏写 & 符号的致命报错
           cd ..
+          # 修复 SukiSU event.c 的指针报错
           if [ -f "common/drivers/kernelsu/sulog/event.c" ]; then
               sed -i 's/USER_ARG_NULL, gfp/\&USER_ARG_NULL, gfp/g' common/drivers/kernelsu/sulog/event.c
               echo "已成功修复 SukiSU event.c 指针错误"
           fi
+          
+          # 【全场救星】注入 KSU 占位符文件，解决 vmlinux 最后的符号丢失链接报错
+          cat << 'EOF' > common/drivers/kernelsu/sukisu_fix.c
+#include <linux/types.h>
+#include <linux/compiler.h>
+#include <linux/jump_label.h>
+#include <linux/export.h>
+
+DEFINE_STATIC_KEY_FALSE(ksu_input_hook_key_false);
+EXPORT_SYMBOL(ksu_input_hook_key_false);
+DEFINE_STATIC_KEY_FALSE(ksu_init_rc_hook_key_false);
+EXPORT_SYMBOL(ksu_init_rc_hook_key_false);
+
+bool ksu_is_init_rc_hook_enabled __aligned(4) = false;
+EXPORT_SYMBOL(ksu_is_init_rc_hook_enabled);
+bool ksu_is_input_hook_enabled __aligned(4) = false;
+EXPORT_SYMBOL(ksu_is_input_hook_enabled);
+EOF
+          echo "obj-y += sukisu_fix.o" >> common/drivers/kernelsu/Makefile
+          echo "已注入 sukisu_fix.c 链接修复补丁"
 
       - name: Apply Patches SukiSU Ultra (Android 15 / 6.6)
         run: |
@@ -100,11 +120,8 @@ jobs:
           echo "检查并安全修复因为冲突漏打的 include 头文件..."
           for f in $(grep -rl "SUSFS_" fs/ | grep "\.c$"); do
               if ! grep -q "linux/susfs.h" "$f"; then
-                  echo "智能修复 $f 中的引用缺失..."
-                  # 找到该文件中最后一个 #include 的行号
                   LAST_INC=$(grep -nE "^[[:space:]]*#include" "$f" | tail -n 1 | cut -d: -f1)
                   if [ -n "$LAST_INC" ]; then
-                      # 将缺失的头文件安全地插在最后一个 include 之后
                       sed -i "${LAST_INC} a #include <linux/cred.h>" "$f"
                       sed -i "$((LAST_INC + 1)) a #include <linux/susfs.h>" "$f"
                   else
@@ -113,15 +130,7 @@ jobs:
                   fi
               fi
           done
-          
-          echo "完成"
-
-      - name: Apply Hide Stuff Patches
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/69_hide_stuff.patch ./
-          echo "正在打隐藏应用补丁"
-          patch -p1 -F 3 < 69_hide_stuff.patch
+          echo "SUSFS 补丁与头文件修复完成"
 
       - name: Add Configuration Settings
         run: |
@@ -187,7 +196,6 @@ jobs:
             cp "$image_path" ./AnyKernel3/Image
           else
             echo "错误：在整个 kernel_workspace 目录中都未找到 Image 文件！"
-            echo "这通常意味着编译在中途失败，请检查上面 'Build kernel' 步骤的具体日志。"
             exit 1
           fi
 
