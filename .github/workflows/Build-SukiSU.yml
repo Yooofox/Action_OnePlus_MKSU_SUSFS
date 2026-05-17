@@ -89,6 +89,16 @@ jobs:
 
           cd ./common
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || true
+          
+          echo "检查并修复因为冲突漏打的 include 头文件..."
+          # 自动找出使用了 SUSFS 但没引入头文件的 .c 文件，强制插入头文件
+          for f in $(grep -rl "SUSFS_" fs/ | grep "\.c$"); do
+              if ! grep -q "linux/susfs.h" "$f"; then
+                  echo "Auto-fixing missing susfs.h include in $f"
+                  sed -i '2i #include <linux/susfs.h>' "$f"
+              fi
+          done
+          
           echo "完成"
 
       - name: Apply Hide Stuff Patches
@@ -130,7 +140,6 @@ jobs:
       - name: Build kernel (OnePlus 13 / sm8750 Fallback Script)
         run: |
          cd kernel_workspace
-         # 加入 set -e，如果编译命令失败（非零退出码），立即停止整个 Action
          set -e
          LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun gki
 
@@ -142,30 +151,25 @@ jobs:
           echo "================ 开始全局搜索 Image 文件 ================"
           cd kernel_workspace
           
-          # 在整个 kernel_workspace 目录下搜索所有名叫 Image 的文件，忽略权限报错
           find . -type f -name "Image" 2>/dev/null > found_images.txt
           
           echo "找到的 Image 文件列表："
           cat found_images.txt
           echo "========================================================="
 
-          # 读取第一行作为我们的 image_path
           raw_image_path=$(head -n 1 found_images.txt)
           
-          cd .. # 回到工作区根目录
+          cd .. 
 
           if [ -n "$raw_image_path" ]; then
-            # 拼接完整相对路径
             image_path="kernel_workspace/${raw_image_path#./}"
             echo "最终选定的 Image 路径为: $image_path"
             cp "$image_path" ./AnyKernel3/Image
           else
-            echo "错误：在整个 kernel_workspace 目录中都未找到 Image 文件！这说明内核根本没有编译成功。"
-            echo "请检查 'Build kernel' 步骤的原始构建日志，看看是不是因为代码冲突或依赖缺失导致了编译失败。"
+            echo "错误：在整个 kernel_workspace 目录中都未找到 Image 文件！"
             exit 1
           fi
 
-          # 尝试在刚才找到 Image 的同级目录，或者固定目录寻找 img 镜像文件
           image_dir=$(dirname "$image_path")
           fallback_dir="kernel_workspace/kernel_platform/out/msm-kernel-sun-gki/dist/"
           
