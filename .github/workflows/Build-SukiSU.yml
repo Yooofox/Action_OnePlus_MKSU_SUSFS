@@ -75,6 +75,13 @@ jobs:
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           export KSU_VERSION=$KSU_VERSION
           sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+          
+          # 【新增】强制修复 SukiSU-Ultra 自身代码在 6.6 内核下的漏写 & 符号的致命报错
+          cd ..
+          if [ -f "common/drivers/kernelsu/sulog/event.c" ]; then
+              sed -i 's/USER_ARG_NULL, gfp/\&USER_ARG_NULL, gfp/g' common/drivers/kernelsu/sulog/event.c
+              echo "已成功修复 SukiSU event.c 指针错误"
+          fi
 
       - name: Apply Patches SukiSU Ultra (Android 15 / 6.6)
         run: |
@@ -150,7 +157,6 @@ jobs:
          cd kernel_workspace
          set -e
          
-         # 【关键新增】修改 Bazel 全局配置，限制并发数和内存，防止进入虚拟内存假死状态
          echo "build --jobs=2" >> ./kernel_platform/.bazelrc
          echo "build --local_ram_resources=5120" >> ./kernel_platform/.bazelrc
          echo "build --local_cpu_resources=2" >> ./kernel_platform/.bazelrc
