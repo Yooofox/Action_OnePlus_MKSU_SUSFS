@@ -20,7 +20,7 @@ jobs:
         with:
           root-reserve-mb: 8192
           temp-reserve-mb: 2048
-          swap-size-mb: 8192
+          swap-size-mb: 12288 # 【修改点1】将虚拟内存提高到 12GB 兜底
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -141,7 +141,8 @@ jobs:
         run: |
          cd kernel_workspace
          set -e
-         LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun gki
+         # 【修改点2】将 LTO=thin 改为 LTO=none，大幅降低内存消耗，防止爆内存
+         LTO=none SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun gki
 
       - name: Make AnyKernel3 & Fix Output Path
         run: |
