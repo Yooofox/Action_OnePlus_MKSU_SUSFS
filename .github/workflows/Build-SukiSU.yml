@@ -48,10 +48,10 @@ jobs:
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/sm8750 -m oneplus_13.xml --depth=1
           repo sync
           if [  -e kernel_platform/common/BUILD.bazel ]; then
-          sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/common/BUILD.bazel
+            sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/common/BUILD.bazel
           fi
           if [  -e kernel_platform/msm-kernel/BUILD.bazel ]; then
-          sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/msm-kernel/BUILD.bazel
+            sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/msm-kernel/BUILD.bazel
           fi
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
           rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
@@ -85,21 +85,21 @@ jobs:
           
           # 【全场救星】注入 KSU 占位符文件，解决 vmlinux 最后的符号丢失链接报错
           cat << 'EOF' > common/drivers/kernelsu/sukisu_fix.c
-#include <linux/types.h>
-#include <linux/compiler.h>
-#include <linux/jump_label.h>
-#include <linux/export.h>
+          #include <linux/types.h>
+          #include <linux/compiler.h>
+          #include <linux/jump_label.h>
+          #include <linux/export.h>
 
-DEFINE_STATIC_KEY_FALSE(ksu_input_hook_key_false);
-EXPORT_SYMBOL(ksu_input_hook_key_false);
-DEFINE_STATIC_KEY_FALSE(ksu_init_rc_hook_key_false);
-EXPORT_SYMBOL(ksu_init_rc_hook_key_false);
+          DEFINE_STATIC_KEY_FALSE(ksu_input_hook_key_false);
+          EXPORT_SYMBOL(ksu_input_hook_key_false);
+          DEFINE_STATIC_KEY_FALSE(ksu_init_rc_hook_key_false);
+          EXPORT_SYMBOL(ksu_init_rc_hook_key_false);
 
-bool ksu_is_init_rc_hook_enabled __aligned(4) = false;
-EXPORT_SYMBOL(ksu_is_init_rc_hook_enabled);
-bool ksu_is_input_hook_enabled __aligned(4) = false;
-EXPORT_SYMBOL(ksu_is_input_hook_enabled);
-EOF
+          bool ksu_is_init_rc_hook_enabled __aligned(4) = false;
+          EXPORT_SYMBOL(ksu_is_init_rc_hook_enabled);
+          bool ksu_is_input_hook_enabled __aligned(4) = false;
+          EXPORT_SYMBOL(ksu_is_input_hook_enabled);
+          EOF
           echo "obj-y += sukisu_fix.o" >> common/drivers/kernelsu/Makefile
           echo "已注入 sukisu_fix.c 链接修复补丁"
 
@@ -163,14 +163,15 @@ EOF
 
       - name: Build kernel (OnePlus 13 / sm8750 Fallback Script)
         run: |
-         cd kernel_workspace
-         set -e
-         
-         echo "build --jobs=2" >> ./kernel_platform/.bazelrc
-         echo "build --local_ram_resources=5120" >> ./kernel_platform/.bazelrc
-         echo "build --local_cpu_resources=2" >> ./kernel_platform/.bazelrc
-         
-         LTO=none SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun perf
+          cd kernel_workspace
+          set -e
+          
+          # 限制 Bazel 内存与 CPU 使用，彻底解决爆内存与假死问题
+          echo "build --jobs=2" >> ./kernel_platform/.bazelrc
+          echo "build --local_ram_resources=5120" >> ./kernel_platform/.bazelrc
+          echo "build --local_cpu_resources=2" >> ./kernel_platform/.bazelrc
+          
+          LTO=none SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh sun perf
 
       - name: Make AnyKernel3 & Fix Output Path
         run: |
@@ -190,62 +191,4 @@ EOF
           
           cd .. 
 
-          if [ -n "$raw_image_path" ]; then
-            image_path="kernel_workspace/${raw_image_path#./}"
-            echo "最终选定的 Image 路径为: $image_path"
-            cp "$image_path" ./AnyKernel3/Image
-          else
-            echo "错误：在整个 kernel_workspace 目录中都未找到 Image 文件！"
-            exit 1
-          fi
-
-          image_dir=$(dirname "$image_path")
-          fallback_dir="kernel_workspace/kernel_platform/out/msm-kernel-sun-perf/dist/"
-          
-          for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
-            if [ -f "$image_dir/$file" ]; then
-               target_name="$file"
-               if [ "$file" = "system_dlkm.erofs.img" ]; then target_name="system_dlkm.img"; fi
-               cp "$image_dir/$file" "./AnyKernel3/$target_name"
-               echo "已复制: $image_dir/$file"
-            elif [ -f "$fallback_dir/$file" ]; then
-               target_name="$file"
-               if [ "$file" = "system_dlkm.erofs.img" ]; then target_name="system_dlkm.img"; fi
-               cp "$fallback_dir/$file" "./AnyKernel3/$target_name"
-               echo "已复制: $fallback_dir/$file"
-            else
-               echo "$file 在 $image_dir 和 $fallback_dir 均未找到，跳过。"
-            fi
-          done
-
-      - name: Apply patch_linux (KPM) in AnyKernel3
-        run: |
-          cd $GITHUB_WORKSPACE/AnyKernel3
-          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
-          chmod +x patch_linux
-          ./patch_linux
-          rm -f Image
-          mv oImage Image
-
-      - name: Download Latest SUSFS Module from CI
-        run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-
-          if [ -z "$LATEST_RUN_ID" ]; then
-            echo "No successful run found for branch v1.5.2+"
-            exit 1
-          fi
-
-          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-
-          curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"
-          cp ksu_module_susfs.zip ./AnyKernel3/
-
-      - name: Upload AnyKernel3
-        uses: actions/upload-artifact@v4
-        with:
-          name: AnyKernel3_OnePlus13_SukiSUUltra_${{ env.KSUVER }}_KPM_VFS
-          path: ./AnyKernel3/*
+          if [ -n "$raw
