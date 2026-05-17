@@ -77,13 +77,10 @@ jobs:
           sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
           
           cd ..
-          # 修复 SukiSU event.c 的指针报错
           if [ -f "common/drivers/kernelsu/sulog/event.c" ]; then
               sed -i 's/USER_ARG_NULL, gfp/\&USER_ARG_NULL, gfp/g' common/drivers/kernelsu/sulog/event.c
-              echo "已成功修复 SukiSU event.c 指针错误"
           fi
           
-          # 【全场救星】注入 KSU 占位符文件，解决 vmlinux 最后的符号丢失链接报错
           cat << 'EOF' > common/drivers/kernelsu/sukisu_fix.c
           #include <linux/types.h>
           #include <linux/compiler.h>
@@ -101,7 +98,6 @@ jobs:
           EXPORT_SYMBOL(ksu_is_input_hook_enabled);
           EOF
           echo "obj-y += sukisu_fix.o" >> common/drivers/kernelsu/Makefile
-          echo "已注入 sukisu_fix.c 链接修复补丁"
 
       - name: Apply Patches SukiSU Ultra (Android 15 / 6.6)
         run: |
@@ -109,7 +105,6 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android15-6.6
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
           cd kernel_platform
-          echo "正在给内核打susfs补丁"
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch ./common/
           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -117,7 +112,6 @@ jobs:
           cd ./common
           patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch || true
           
-          echo "检查并安全修复因为冲突漏打的 include 头文件..."
           for f in $(grep -rl "SUSFS_" fs/ | grep "\.c$"); do
               if ! grep -q "linux/susfs.h" "$f"; then
                   LAST_INC=$(grep -nE "^[[:space:]]*#include" "$f" | tail -n 1 | cut -d: -f1)
@@ -130,7 +124,6 @@ jobs:
                   fi
               fi
           done
-          echo "SUSFS 补丁与头文件修复完成"
 
       - name: Add Configuration Settings
         run: |
@@ -166,7 +159,6 @@ jobs:
           cd kernel_workspace
           set -e
           
-          # 限制 Bazel 内存与 CPU 使用，彻底解决爆内存与假死问题
           echo "build --jobs=2" >> ./kernel_platform/.bazelrc
           echo "build --local_ram_resources=5120" >> ./kernel_platform/.bazelrc
           echo "build --local_cpu_resources=2" >> ./kernel_platform/.bazelrc
@@ -178,17 +170,62 @@ jobs:
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
 
-          echo "================ 开始全局搜索 Image 文件 ================"
           cd kernel_workspace
-          
           find . -type f -name "Image" 2>/dev/null > found_images.txt
-          
-          echo "找到的 Image 文件列表："
-          cat found_images.txt
-          echo "========================================================="
-
           raw_image_path=$(head -n 1 found_images.txt)
-          
           cd .. 
 
-          if [ -n "$raw
+          if [ -n "$raw_image_path" ]; then
+            image_path="kernel_workspace/${raw_image_path#./}"
+            cp "$image_path" ./AnyKernel3/Image
+          else
+            echo "Error: Image file not found in workspace."
+            exit 1
+          fi
+
+          image_dir=$(dirname "$image_path")
+          fallback_dir="kernel_workspace/kernel_platform/out/msm-kernel-sun-perf/dist/"
+          
+          for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
+            if [ -f "$image_dir/$file" ]; then
+               target_name="$file"
+               if [ "$file" = "system_dlkm.erofs.img" ]; then target_name="system_dlkm.img"; fi
+               cp "$image_dir/$file" "./AnyKernel3/$target_name"
+            elif [ -f "$fallback_dir/$file" ]; then
+               target_name="$file"
+               if [ "$file" = "system_dlkm.erofs.img" ]; then target_name="system_dlkm.img"; fi
+               cp "$fallback_dir/$file" "./AnyKernel3/$target_name"
+            fi
+          done
+
+      - name: Apply patch_linux (KPM) in AnyKernel3
+        run: |
+          cd $GITHUB_WORKSPACE/AnyKernel3
+          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
+          chmod +x patch_linux
+          ./patch_linux
+          rm -f Image
+          mv oImage Image
+
+      - name: Download Latest SUSFS Module from CI
+        run: |
+          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+
+          if [ -z "$LATEST_RUN_ID" ]; then
+            echo "No successful run found for branch v1.5.2+"
+            exit 1
+          fi
+
+          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+
+          curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"
+          cp ksu_module_susfs.zip ./AnyKernel3/
+
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3_OnePlus13_SukiSUUltra_${{ env.KSUVER }}_KPM_VFS
+          path: ./AnyKernel3/*
